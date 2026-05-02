@@ -1,0 +1,64 @@
+Here is a concise ERD review, what we changed conceptually, and how that maps to the code that was added.
+
+ERD review — major issues
+Purchasing
+The diagram tied Student directly to OrderItem (“Purchase”). In a normalized checkout model, the buyer should own the order header: Student → Order (1:m) → OrderItem (1:m), with each line item pointing at Course and carrying a price snapshot. OrderItem should not need a Student foreign key if Order already has StudentId.
+
+LectureProgress → Course
+Lecture already belongs to Section → Course, so a direct LectureProgress → Course link duplicates that path and can get out of sync. Progress is fully defined by (Lecture, Student); Course is derived by joining through Lecture → Section → Course (or a view/query when you need it).
+
+Course attribute
+Discription is a spelling error; the model uses Description.
+
+User security
+Storing a raw Password on the entity is not appropriate; the model uses PasswordHash (how you hash is an app concern).
+
+Student ↔ Category
+A single “Has” line is ambiguous. It is modeled explicitly as a many-to-many with a join entity StudentCategory (e.g. interests or followed categories), mirroring Course–Category with CourseCategory.
+
+Student ↔ Course (enrollment)
+The M:N enrollment is explicit as Enrollment (student + course + EnrolledAt), instead of an implied link only.
+
+Derived fields
+InstructorProfile metrics (e.g. average rating, totals) and Order.TotalAmount are still represented: instructor fields are denormalized/cached values you refresh in app or jobs; TotalAmount is the usual stored total at checkout for the order.
+
+What was added in the project
+Area	Files / role
+Enums
+Models/Enums.cs — UserRole, CourseLevel, CourseStatus, OrderStatus, PaymentStatus
+Identity & roles
+User, Student (PK = UserId), InstructorProfile (PK = UserId)
+Catalog
+Category, Course, Section, Lecture, join tables CourseCategory, StudentCategory
+Progress & learning
+LectureProgress (composite key LectureId + StudentId, no CourseId), Enrollment
+Social / commerce
+Review (unique per student per course), Order (StudentId), OrderItem (no student FK), Payment (1:1 with Order via Payment.OrderId)
+EF Core
+Data/StudyHubContext.cs — DbSets, composite keys, unique indexes (email, review, payment order), delete behaviors
+Hosting
+Program.cs registers StudyHubContext with SQLite; appsettings.json has DefaultConnection for studyhub.db
+Build completes successfully (dotnet build).
+
+Quick relationship summary (fixed ERD)
+User 1:0..1 Student and 1:0..1 InstructorProfile (by role you only materialize the relevant row).
+Instructor 1:m Course; Course m:n Category via CourseCategory; Student m:n Category via StudentCategory; Student m:n Course via Enrollment.
+Course 1:m Section 1:m Lecture; Lecture m:n Student via LectureProgress (no direct course on progress).
+Student 1:m Order; Order 1:m OrderItem; Order 1:0..1 Payment.
+Review m:1 Student and m:1 Course, with at most one review per student per course in the database.
+If you want next steps, we can add a first migration (dotnet ef migrations add InitialCreate) and wire IUnitOfWork in Program.cs, or switch the connection string to SQL Server instead of SQLite.
+
+Microsoft.EntityFrameworkCore is only the core: change tracking, LINQ, model building, etc. It does not talk to any real database by itself.
+
+Microsoft.EntityFrameworkCore.Sqlite is the SQLite provider: it plugs into EF Core and implements SQL generation, connections, migrations, and SQLite-specific types for UseSqlite(...).
+
+So you need some provider package whenever you want a real database:
+
+If you call…	You need…
+UseSqlite(...)
+Microsoft.EntityFrameworkCore.Sqlite
+UseSqlServer(...)
+Microsoft.EntityFrameworkCore.SqlServer
+UseNpgsql(...)
+Npgsql.EntityFrameworkCore.PostgreSQL
+We added SQLite so the API could run locally with a simple file (studyhub.db) and no separate DB server. If you move to SQL Server (or another engine), you’d swap the package and UseSqlite for that provider’s package and Use* method—not keep SQLite unless you still want SQLite.
